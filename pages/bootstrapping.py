@@ -9,7 +9,7 @@ from helper import saved_df
 def show():
     st.title('Bootstrapping')
 
-    if saved_df().df==None:
+    if not isinstance(saved_df().df, pd.DataFrame):
         st.write('Save data in "Generate Data" step first')
         st.stop()
 
@@ -72,7 +72,10 @@ def show():
     st.text("")
 
     df_boot['loss'] = df_boot[TTL_PREMIUM] - df_boot[TTL_CLAIMS]
-    c = alt.Chart(df_boot).mark_circle().encode(
+    c = alt.Chart(
+        df_boot,
+        title='Distribution of total premium and claims'
+    ).mark_circle().encode(
         x=alt.X(TTL_PREMIUM, scale=alt.Scale(zero=False)),
         y=alt.Y(TTL_CLAIMS, scale=alt.Scale(zero=False)),
         color=TTL_LR,
@@ -80,10 +83,11 @@ def show():
     )
     st.altair_chart(c, use_container_width=True)
 
-    # draw box plot
-    st.write('Distribution of bootstrap portfolio loss ratio')
+    # draw loss ratio distribution
+
     c = alt.Chart(
-        df_boot
+        df_boot,
+        title='Distribution of bootstrap portfolio loss ratio'
     ).transform_density(
         TTL_LR,
         as_=[TTL_LR, "density"],
@@ -102,7 +106,7 @@ def show():
              .style.format(boot_formatting))
 
     # Summary text
-    iq_range = st.slider('Quartile range', 0.0, 1.0, (0.25, 0.75), 0.05)
+    iq_range = st.slider('Quartile range', 0.0, 1.0, (0.05, 0.95), 0.025, format='%.3f')
     range = iq_range[1] - iq_range[0]
     iqr_value = df_boot[TTL_LR].quantile(list(iq_range)).tolist()
     # st.write(str(iqr_value))

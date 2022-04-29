@@ -1,6 +1,7 @@
 import streamlit as st
 from pages import generate_data, bootstrapping
 
+st.set_page_config(page_title='Insurance Simulation', page_icon='📓')
 pages = {
     'Generate Data': generate_data,
     'Bootstrapping': bootstrapping
