@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import const
+import altair as alt
 
 
 def show():
@@ -47,7 +48,7 @@ def show():
         data = pd.DataFrame({const.POLICY_ID: [f'p{i}' for i in range(n)],
                              const.SUR: rng.choice(loss, p=probability, size=n)})
         data.set_index(const.POLICY_ID, inplace=True)
-        data[const.ROL] = rng.normal(loc=1 / rol, scale=10, size=n)
+        data[const.ROL] = rng.normal(loc=1 / rol, scale=10, size=n).clip(1, None)
         data[const.PREMIUM] = (np.round(data[const.SUR] / data[const.ROL], 2))
         return data
 
@@ -75,15 +76,14 @@ def show():
 
         st.dataframe(df.head(100).style.format('{:,.0f}'))
 
-        hist_values = np.histogram(df[const.PREMIUM], bins=50)
-        hist_df = pd.DataFrame(list(hist_values), index=['count', 'bin']).T
-        hist_df['bin'] = hist_df['bin'].astype(float)
-        hist_df.set_index('bin', inplace=True)
-        st.bar_chart(hist_df)
-
-        # fig, ax = plt.subplots()
-        # ax.hist(df[const.PREMIUM], bins=300)
-        # st.pyplot(fig)
+        alt_hist = alt.Chart(
+            df,
+            title='Bootstrapped premium distribution'
+        ).mark_bar().encode(
+            x=alt.X(const.PREMIUM+':Q', bin=alt.BinParams(maxbins=50)),
+            y='count()',
+        )
+        st.altair_chart(alt_hist, use_container_width=True)
 
     # ======================= generating claims probability ========================
 
@@ -104,7 +104,7 @@ def show():
       - Gamma: conditional latent probability of the claim severity (measured as losses per unit liability)
     """)
 
-    st.markdown('<h4>Beta-Binomial distribution</h4>', unsafe_allow_html=True)
+    st.write('#### Beta-Binomial distribution')
     st.write("This distribution models claim occurrence, here we assume one policy can only have one claim."
              " It has two parameters: α and β")
 
@@ -112,21 +112,39 @@ def show():
 
     col201, col202 = st.columns(2)
     with col201:
-        beta_a = st.slider('α parameter', 0, 5, 2)
+        beta_a = st.slider('α parameter', 0.0, 10.0, 5.0, format='%.1f')
     with col202:
-        beta_b = st.slider('β parameter', 0, 400, 70)
+        beta_b = st.slider('β parameter', 0, 100, 35)
 
-    x = np.linspace(0.00001, 0.1, 100)
+    x = np.linspace(0.00001, 0.3, 500)
     df_beta = pd.DataFrame({'x': x,
                             'a=1, b=30': beta.pdf(x, a=1, b=30),
-                            'a=1, b=50': beta.pdf(x, a=1, b=50),
-                            'a=1, b=100': beta.pdf(x, a=1, b=100),
+                            'a=5, b=50': beta.pdf(x, a=5, b=50),
+                            'a=4, b=100': beta.pdf(x, a=4, b=100),
                             'a=2, b=150': beta.pdf(x, a=2, b=150),
-                            'a=2, b=300': beta.pdf(x, a=2, b=300),
+                            'a=2, b=80': beta.pdf(x, a=2, b=80),
                             f'a={beta_a}, b={beta_b}': beta.pdf(x, beta_a, beta_b)
                             })
-    df_beta.set_index('x', inplace=True)
-    st.line_chart(df_beta)
+
+    alt_data = df_beta.melt('x')
+    alt_data.rename(columns={'value': 'pdf', 'variable': 'params'}, inplace=True)
+    alt_data['colours'] = alt_data['params']
+    colours = dict(zip(
+        df_beta.columns[1:7],
+        ['#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7', '#FF4B4B']))
+    alt_data['colours'] = alt_data['colours'].replace(colours)
+    alt_beta = alt.Chart(alt_data).mark_line().encode(
+        x='x',
+        y='pdf',
+        color=alt.Color('colours', scale=None),
+    )
+    alt_text = alt.Chart(alt_data).mark_text(align='left', dx=3).encode(
+        alt.X('x:Q', aggregate={'argmax': 'pdf'}),
+        alt.Y('pdf:Q', aggregate='max'),
+        alt.Text('params'),
+        color=alt.Color('colours', scale=None)
+    )
+    st.altair_chart((alt_beta + alt_text), use_container_width=True)
 
     df = genClaimProbabiliy(df, beta_a, beta_b)
 
@@ -147,31 +165,49 @@ def show():
         data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
         return data
 
-    st.markdown('<h4>Gamma distribution</h4>', unsafe_allow_html=True)
+    st.write('#### Gamma distribution')
     st.write("This distribution models claim severity. It has two parameters: shape parameter k and scale parameter θ")
 
     from scipy.stats import gamma
 
     col301, col302 = st.columns(2)
     with col301:
-        gamma_a = st.slider('Shape parameter k', 0.3, 3.0, 1.5)
+        gamma_a = st.slider('Shape parameter k', 0.01, 5.0, 1.6, format='%.2f')
     with col302:
-        gamma_scale = st.slider('Scale parameter θ', 0.1, 3.0, 0.5)
+        gamma_scale = st.slider('Scale parameter θ', 0.01, 0.5, 0.1, step=0.005, format='%.3f')
 
     args = {'a': gamma_a, 'scale': gamma_scale}
 
-    x = np.linspace(0.00001, 20, 100)
+    x = np.linspace(0.00001, 1, 500)
     df_gamma = pd.DataFrame({'x': x,
                              'a=1, θ=2': gamma.pdf(x, a=1, scale=2),
-                             'a=2, θ=2': gamma.pdf(x, a=2, scale=2),
-                             'a=3, θ=2': gamma.pdf(x, a=3, scale=2),
-                             'a=5, θ=1': gamma.pdf(x, a=5, scale=1),
-                             'a=9, θ=0.5': gamma.pdf(x, a=9, scale=0.5),
-                             'a=7.5, θ=1': gamma.pdf(x, a=7.5, scale=1),
-                             f'a={gamma_a}, θ={gamma_scale}': gamma.pdf(x, gamma_a, gamma_scale)
+                             'a=2, θ=0.1': gamma.pdf(x, a=2, scale=0.1),
+                             'a=2, θ=0.2': gamma.pdf(x, a=2, scale=0.2),
+                             'a=1, θ=1': gamma.pdf(x, a=1, scale=1),
+                             'a=1, θ=0.3': gamma.pdf(x, a=1, scale=0.3),
+                             # 'a=7.5, θ=1': gamma.pdf(x, a=7.5, scale=1),
+                             f'a={gamma_a}, θ={gamma_scale}': gamma.pdf(x, a=gamma_a, scale=gamma_scale)
                              })
-    df_gamma.set_index('x', inplace=True)
-    st.line_chart(df_gamma)
+
+    alt_data = df_gamma.melt('x')
+    alt_data.rename(columns={'value': 'pdf', 'variable': 'params'}, inplace=True)
+    alt_data['colours'] = alt_data['params']
+    colours = dict(zip(
+        df_gamma.columns[1:7],
+        ['#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7', '#FF4B4B']))
+    alt_data['colours'] = alt_data['colours'].replace(colours)
+    alt_beta = alt.Chart(alt_data).mark_line().encode(
+        x='x',
+        y=alt.Y('pdf'),
+        color=alt.Color('colours', scale=None),
+    )
+    alt_text = alt.Chart(alt_data).mark_text(align='left', dx=3).encode(
+        alt.X('x:Q', aggregate={'argmax': 'pdf'}),
+        alt.Y('pdf:Q', aggregate='max'),
+        alt.Text('params'),
+        color=alt.Color('colours', scale=None)
+    )
+    st.altair_chart((alt_beta + alt_text), use_container_width=True)
 
     df = genClaimSeverity(df, gamma_a, gamma_scale)
 
@@ -187,11 +223,4 @@ def show():
         st.session_state.df = df
         st.write('`Data saved`')
 
-    st.text("")
-    st.caption("""
-    Inspiration and references taken from:
-    - https://openacttexts.github.io
-    - https://sedar.co/posts/bootstrap-primer/
-    - https://www.investopedia.com/terms/r/rate-line.asp
-    - https://www.kaggle.com/code/derrickchua29/simulating-claim-data-iacl-calculation
-    """)
+
