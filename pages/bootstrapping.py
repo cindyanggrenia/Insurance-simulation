@@ -127,6 +127,10 @@ def conf_int(data: pd.DataFrame,
 def show():
     st.title('Bootstrapping')
 
+    if not isinstance(saved_df().df, pd.DataFrame):
+        st.write('Save data in "Generate Data" step first')
+        st.stop()
+
     df = saved_df().df.copy()
 
     st.write(f"""

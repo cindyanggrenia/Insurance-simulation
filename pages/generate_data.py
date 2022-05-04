@@ -58,7 +58,7 @@ def show():
 
     dfp = dfp[[const.SUR, const.BRACKET_P]]
     dfp_styler = dfp.style.format(formatting)
-    df = genPolicyPremium(n_policies, dfp[const.SUR], dfp[const.BRACKET_P], rate_on_line)
+    df_policy = genPolicyPremium(n_policies, dfp[const.SUR], dfp[const.BRACKET_P], rate_on_line)
 
     with st.expander('See explanation', expanded=False):
         st.dataframe(dfp_styler)
@@ -74,79 +74,130 @@ def show():
              }''')
         st.write('\n\n')
 
-        st.dataframe(df.head(100).style.format('{:,.0f}'))
+        st.dataframe(df_policy.head(100).style.format('{:,.0f}'))
 
         alt_hist = alt.Chart(
-            df,
+            df_policy,
             title='Bootstrapped premium distribution'
         ).mark_bar().encode(
-            x=alt.X(const.PREMIUM+':Q', bin=alt.BinParams(maxbins=50)),
+            x=alt.X(const.PREMIUM + ':Q', bin=alt.BinParams(maxbins=50)),
             y='count()',
         )
         st.altair_chart(alt_hist, use_container_width=True)
 
     # ======================= generating claims probability ========================
 
-    @st.cache
-    def genClaimProbabiliy(data_in, a, b):
-        """Add latent claims probability to existing policy dataframe"""
-        data = data_in.copy()
-        data[const.LATENT_CLAIM_P] = rng.beta(a=a, b=b, size=data.shape[0])
-        data[const.HAS_CLAIM] = rng.binomial(n=1, p=data[const.LATENT_CLAIM_P])  # assume only 1 claim per policy
-        # TODO: a policy can have multiple claim
-        return data
-
     st.subheader("Claims generation")
     st.write("""
     The claims generating process is modelled as:
-      - Beta-Binomial Model: beta distribution for modelling probability of making a claim, and binomial to model \
-      if the claim did happen of not, given the probability
+      - Claim frequency model: modelling the number of claims that happen for a partifular policy
       - Gamma: conditional latent probability of the claim severity (measured as losses per unit liability)
     """)
 
-    st.write('#### Beta-Binomial distribution')
-    st.write("This distribution models claim occurrence, here we assume one policy can only have one claim."
-             " It has two parameters: α and β")
+    def freq_beta_binomial():
+        from scipy.stats import beta
+        st.write('#### Beta-Binomial distribution')
+        st.write("This conjugate distribution consists of beta distribution for modelling individual policy's "
+                 "probability of making a claim. Binomial (or Bernoulli in this specific case) to model whether "
+                 "the claim did happen of not, given the probability")
 
-    from scipy.stats import beta
+        col201, col202 = st.columns(2)
+        with col201:
+            beta_a = st.slider('α parameter', 0.0, 10.0, 5.0, format='%.1f')
+        with col202:
+            beta_b = st.slider('β parameter', 0, 100, 35)
 
-    col201, col202 = st.columns(2)
-    with col201:
-        beta_a = st.slider('α parameter', 0.0, 10.0, 5.0, format='%.1f')
-    with col202:
-        beta_b = st.slider('β parameter', 0, 100, 35)
+        x = np.linspace(0.00001, 0.3, 500)
+        df_graph = pd.DataFrame({'x': x,
+                                 f'a={beta_a}, b={beta_b}': beta.pdf(x, a=beta_a, b=beta_b),
+                                 'a=1, b=30': beta.pdf(x, a=1, b=30),
+                                 'a=5, b=50': beta.pdf(x, a=5, b=50),
+                                 'a=4, b=100': beta.pdf(x, a=4, b=100),
+                                 'a=2, b=150': beta.pdf(x, a=2, b=150),
+                                 'a=2, b=80': beta.pdf(x, a=2, b=80)
+                                 })
 
-    x = np.linspace(0.00001, 0.3, 500)
-    df_beta = pd.DataFrame({'x': x,
-                            'a=1, b=30': beta.pdf(x, a=1, b=30),
-                            'a=5, b=50': beta.pdf(x, a=5, b=50),
-                            'a=4, b=100': beta.pdf(x, a=4, b=100),
-                            'a=2, b=150': beta.pdf(x, a=2, b=150),
-                            'a=2, b=80': beta.pdf(x, a=2, b=80),
-                            f'a={beta_a}, b={beta_b}': beta.pdf(x, beta_a, beta_b)
-                            })
+        @st.cache
+        def genClaimProbabiliy(data_in, a, b):
+            """Add latent claims probability to existing policy dataframe"""
+            data = data_in.copy()
+            data[const.LATENT_CLAIM_P] = rng.beta(a=a, b=b, size=data.shape[0])
+            data[const.HAS_CLAIM] = rng.binomial(n=1, p=data[const.LATENT_CLAIM_P])  # assume only 1 claim per policy
+            return data
 
-    alt_data = df_beta.melt('x')
+        st.session_state.freq_model = 'Beta-Binomial'
+        st.session_state.freq_model_param = {'a': beta_a, 'b': beta_b}
+
+        df = genClaimProbabiliy(df_policy, a=beta_a, b=beta_b)
+        return df_graph, df
+
+    def freq_poisson():
+        from scipy.stats import poisson
+        st.write('#### Poisson distribution')
+        st.write("Very commonly used to model random occurrences in a certain time period. "
+                 "The rate of occurrence is parameterized a constant, λ")
+
+        col201, col202 = st.columns(2)
+        with col201:
+            mu = st.slider('λ parameter', 0.0, 1.0, 0.12, format='%.2f')
+
+        x = np.linspace(0, 5, 6)
+        df_graph = pd.DataFrame({'x': x,
+                                 f'λ={mu}': poisson.pmf(x, mu=mu),
+                                 'λ=1': poisson.pmf(x, mu=1),
+                                 'λ=2': poisson.pmf(x, mu=2),
+                                 'λ=0.5': poisson.pmf(x, mu=0.5),
+                                 'λ=0.1': poisson.pmf(x, mu=0.1),
+                                 # 'a=2, b=80': poisson.pdf(x, a=2, b=80),
+                                 })
+
+        @st.cache
+        def genClaimProbabiliy(data_in, mu):
+            """Add latent claims probability to existing policy dataframe"""
+            data = data_in.copy()
+            data[const.HAS_CLAIM] = rng.poisson(lam=mu, size=data.shape[0])
+            return data
+
+        st.session_state.freq_model = 'Poisson'
+        st.session_state.freq_model_param = {'mu': mu}
+
+        df = genClaimProbabiliy(df_policy, mu)
+        return df_graph, df
+
+    st.write('#### Claim Frequency distribution')
+    freq_model = {'Beta-Binomial': freq_beta_binomial, 'Poisson': freq_poisson}
+    # TODO: add negative binomial, poisson gamma
+    selected_freq_model = st.selectbox('Choises of model:', options=freq_model.keys(), index=1)
+
+    df_freq, df = freq_model[selected_freq_model]()
+
+    alt_data = df_freq.melt('x')
     alt_data.rename(columns={'value': 'pdf', 'variable': 'params'}, inplace=True)
     alt_data['colours'] = alt_data['params']
     colours = dict(zip(
-        df_beta.columns[1:7],
-        ['#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7', '#FF4B4B']))
+        df_freq.columns[1:7],
+        ['#FF4B4B', '#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7']))
     alt_data['colours'] = alt_data['colours'].replace(colours)
-    alt_beta = alt.Chart(alt_data).mark_line().encode(
-        x='x',
+
+    if selected_freq_model == 'Poisson':
+        x_axis = alt.X('x', axis=alt.Axis(values=list(range(0, 5, 1))))
+    else:
+        x_axis = 'x'
+
+    alt_freq = alt.Chart(alt_data).mark_line().encode(
+        x=x_axis,
         y='pdf',
         color=alt.Color('colours', scale=None),
+        tooltip=[alt.Tooltip('x', format=',.2f'),
+                 alt.Tooltip('pdf', format=',.3f')]
     )
-    alt_text = alt.Chart(alt_data).mark_text(align='left', dx=3).encode(
-        alt.X('x:Q', aggregate={'argmax': 'pdf'}),
-        alt.Y('pdf:Q', aggregate='max'),
+    alt_text = alt.Chart(alt_data).mark_text(align='left', dy=-5).encode(
+        alt.X('x:Q', aggregate={'argmax': 'pdf'}, title='x'),
+        alt.Y('pdf:Q', aggregate='max', title='pdf'),
         alt.Text('params'),
         color=alt.Color('colours', scale=None)
     )
-    st.altair_chart((alt_beta + alt_text), use_container_width=True)
-
-    df = genClaimProbabiliy(df, beta_a, beta_b)
+    st.altair_chart((alt_freq + alt_text), use_container_width=True)
 
     with st.expander('Show generated claims probability and occurance', expanded=False):
         st.dataframe(df.head(100).style.format(formatting))
@@ -154,6 +205,11 @@ def show():
         Number of policies: {df.shape[0]}
         Total premium: {df[const.PREMIUM].sum():,.0f}
         Number of claims: {df[const.HAS_CLAIM].sum()}""")
+
+        st.write(df[[const.HAS_CLAIM]]
+                 .groupby(const.HAS_CLAIM)
+                 .agg(counts=pd.NamedAgg(column=const.HAS_CLAIM, aggfunc="count"))
+                 .reset_index())
 
     # ======================= generating claims severity ========================
 
@@ -180,13 +236,13 @@ def show():
 
     x = np.linspace(0.00001, 1, 500)
     df_gamma = pd.DataFrame({'x': x,
+                             f'a={gamma_a}, θ={gamma_scale}': gamma.pdf(x, a=gamma_a, scale=gamma_scale),
                              'a=1, θ=2': gamma.pdf(x, a=1, scale=2),
                              'a=2, θ=0.1': gamma.pdf(x, a=2, scale=0.1),
                              'a=2, θ=0.2': gamma.pdf(x, a=2, scale=0.2),
                              'a=1, θ=1': gamma.pdf(x, a=1, scale=1),
                              'a=1, θ=0.3': gamma.pdf(x, a=1, scale=0.3),
-                             # 'a=7.5, θ=1': gamma.pdf(x, a=7.5, scale=1),
-                             f'a={gamma_a}, θ={gamma_scale}': gamma.pdf(x, a=gamma_a, scale=gamma_scale)
+                             # 'a=7.5, θ=1': gamma.pdf(x, a=7.5, scale=1)
                              })
 
     alt_data = df_gamma.melt('x')
@@ -194,16 +250,18 @@ def show():
     alt_data['colours'] = alt_data['params']
     colours = dict(zip(
         df_gamma.columns[1:7],
-        ['#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7', '#FF4B4B']))
+        ['#FF4B4B', '#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7']))
     alt_data['colours'] = alt_data['colours'].replace(colours)
     alt_beta = alt.Chart(alt_data).mark_line().encode(
         x='x',
         y=alt.Y('pdf'),
         color=alt.Color('colours', scale=None),
+        tooltip=[alt.Tooltip('x', format=',.2f'),
+                 alt.Tooltip('pdf', format=',.3f')]
     )
-    alt_text = alt.Chart(alt_data).mark_text(align='left', dx=3).encode(
-        alt.X('x:Q', aggregate={'argmax': 'pdf'}),
-        alt.Y('pdf:Q', aggregate='max'),
+    alt_text = alt.Chart(alt_data).mark_text(align='left', dy=-5).encode(
+        alt.X('x:Q', aggregate={'argmax': 'pdf'}, title='x'),
+        alt.Y('pdf:Q', aggregate='max', title='pdf'),
         alt.Text('params'),
         color=alt.Color('colours', scale=None)
     )
@@ -219,8 +277,6 @@ def show():
         Number of claims: {df[const.HAS_CLAIM].sum()}
         Total claims: {df[const.CLAIMS].sum():,.0f}""")
 
-    if st.button('Save data and go to bootstrapping 🚀'):
-        st.session_state.df = df
-        st.write('`Data saved`')
-
-
+    # if st.button('Save data and go to bootstrapping 🚀'):
+    st.session_state.df = df
+    # st.write('`Data saved`')
