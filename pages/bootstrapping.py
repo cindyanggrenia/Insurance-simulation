@@ -5,7 +5,6 @@ from scipy.stats import norm
 import const
 import altair as alt
 from helper import saved_df
-import logging
 
 rng = np.random.default_rng(42)
 SEED = 42
@@ -26,33 +25,8 @@ boot_formatting = {TTL_PREMIUM: '{:,.0f}', TTL_CLAIMS: '{:,.0f}', TTL_LR: '{:.0%
                    }
 
 
-@st.cache
-def calc_LR(premium, claims):
-    """loss Ratio = Claims / Premium"""
-    statistic = sum(claims) / sum(premium)
-    return statistic
-
-
-@st.cache
-def calc_Loss_quantile(premium, claims, q):
-    """loss Ratio = Premium - Claims quantile """
-    statistic = np.quantile((sum(premium) - sum(claims)), q)
-    return statistic
-
-
-@st.cache
-def calc_LER(claims, d):
-    """loss Elimination Ratio
-    deductible, d, is the amount of loss paid by policyholder before the insurer makes any payment
-    LER is the percentage decrease in the expected payment of the insurer as a result of imposing the deductible
-    """
-    claims_d = [x - d for x in claims if x > d]
-    statistic = 1 - (sum(claims_d) / sum(claims))
-    return statistic
-
-
 @st.cache(allow_output_mutation=True)
-def bootstrap_lr(data_in, nboot: int):
+def bootstrap(data_in, nboot: int):
     data = data_in.copy()
 
     sample_idx = rng.integers(0, len(data), size=(len(data), nboot))
@@ -74,7 +48,7 @@ def bootstrap_lr(data_in, nboot: int):
         dfboot[col_name] = 1 - claims_d_boot.sum(axis=0) / dfboot[TTL_CLAIMS]
 
     # Tail value at risk columns
-    for q in p_list:
+    for q in q_list:
         col_name = f'TVaR {q:.2f}'
         threshold = np.quantile(claims_boot, q, axis=0)
         sum_tail_risk = (claims_boot * (claims_boot > threshold)).sum(axis=0)
@@ -84,7 +58,6 @@ def bootstrap_lr(data_in, nboot: int):
     return dfboot
 
 from typing_extensions import Literal
-from numpy.typing import ArrayLike
 
 @st.cache
 def conf_int(data: pd.DataFrame,
@@ -93,7 +66,12 @@ def conf_int(data: pd.DataFrame,
              axis: Literal[0, 1] = 0,
              formatting: callable = None):
     """
-    Input should be a dataframe, f is for formatting CI
+    :param data: dataframe input
+    :param size: confidence level
+    :param tail: 1 or 2 for one or two tail
+    :param axis: axis where the statistics are calculated
+    :param formatting: string formatting for output numeric range
+    :return:
     Output 3 types of Confidence Interval: normal, basic, percentile
     - 'normal' CI formula is (θ−z*σ , θ+z*σ)
     - 'basic' CI formula is (2θ−qU, 2θ−qL)
@@ -176,7 +154,7 @@ def show():
 
         st.form_submit_button('Bootstrap data')
 
-    df_boot = bootstrap_lr(df, int(n_boot))
+    df_boot = bootstrap(df, int(n_boot))
 
     st.write('#### Analysis of bootstrapped portfolio')
 
@@ -220,10 +198,6 @@ def show():
     st.write(df_boot.describe().loc[['mean', 'std', 'min', 'max']]
              .style.format(boot_formatting))
 
-    if st.button('Save data and go to analysis 🚀'):
-        st.session_state.df_boot = df_boot
-        st.write('`Data saved`')
-
     st.write("#### Estimating Loss Ratio statistics:")
 
     st.write(r'We summarize the nonparametric bootstrap summary measures below.'
@@ -248,77 +222,6 @@ def show():
     3. Percentile CI: approximate intervals using quantile. Suitable when standard error of bootstrap statistic and sample statistic are the same
     4. BCa or Bias Corrected Accelerated CI: uses percentile limits with bias correction and estimate acceleration coefficient (**to be implemented**)
     """)
-    # st.write(r"""
-    # Therefore, we can calculate the Bootstrap estimate of various statistic:
-    # 1. Mean = {:.1f}% and bias = {:.1f}%
-    # 2. Standard Deviation = {:.1f}%
-    # 3. Mean Square Error = {:.1f}%
-    # 4. Confidence interval. The major benefit of using bootstrap method is avoiding normality assumption.
-    #     This allows alternative confidence intervals:
-    #     - Normal CI: uses standard deviation, suitable when statistic is normally distributed
-    #     - Basic CI: uses mean and percentile to calculate upper and lower limit, suitable when bootstrap statistic is normally distributed (**recommended**)
-    #     - Percentile CI: approximate intervals using quantile. Suitable when standard error of bootstrap statistic and sample statistic are the same
-    # """.format(df_boot[TTL_LR].mean() * 100,
-    #            df_boot[TTL_LR].mean() * 100 - (df[const.CLAIMS].sum() / df[const.PREMIUM].sum() * 100),
-    #            df_boot[TTL_LR].var(ddof=1) * 100,
-    #            df_boot[TTL_LR].var() * 100))
-
-    # ============== Start bootstrap measures ================
-
-    # from scipy.stats import bootstrap
-
-    # @st.cache
-    # def cached_scipy_boot(*args, **kwargs):
-    #     rng = np.random.default_rng(SEED)
-    #     return bootstrap(*args, **kwargs, random_state=rng)
-
-
-    # import itertools
-    # @st.cache
-    # def get_bootstrap_ci(data: tuple, statistic: callable, ci: float, index: list, method=None):
-    #     if method is None:
-    #         method = ['basic', 'percentile', 'BCa']
-    #
-    #     out = pd.DataFrame(columns=method, index=index)
-    #
-    #     for i, m in itertools.product(index, method):
-    #         logging.log(20, msg=f"Running {i:.2%} with {m} CI")
-    #
-    #         res = cached_scipy_boot(
-    #             data, statistic, method=m, confidence_level=ci,
-    #             vectorized=False, paired=True, n_resamples=n_boot
-    #         )
-    #         out.loc[i, m] = '({:.1%} - {:.1%})'.format(*res.confidence_interval)
-    #
-    #     return out
-
-    # # =========== Loss Ratio Bootstrap estimate ===========
-    #
-    # _std = cached_scipy_boot(
-    #     (df[const.PREMIUM], df[const.CLAIMS]), calc_LR,
-    #     vectorized=False, paired=True, n_resamples=n_boot
-    # ).standard_error
-    #
-    # ci_list = [0.7, 0.8, 0.9, 0.95, 0.98]
-    # df_ci = pd.DataFrame(columns=['basic', 'percentile', 'BCa'])
-    # for p in ci_list:
-    #     df_ci = df_ci.append(get_bootstrap_ci((df[const.PREMIUM], df[const.CLAIMS]), calc_LR, ci=p, index=[p]))
-    #
-    #
-    # st.write("""
-    # #### A.  Bootstrap Estimates of Loss Ratio
-    # - Mean = {:.1f}%
-    # - Bias = {:.1f}%
-    # - Standard Deviation: = {:.3f}%
-    # - Confidence Interval""".format(
-    #     df_boot[TTL_LR].mean() * 100,
-    #     df_boot[TTL_LR].mean() * 100 - (df[const.CLAIMS].sum() / df[const.PREMIUM].sum() * 100),
-    #     _std * 100
-    # ))
-    #
-    # df_ci.index = [f'{x:,.1%}' for x in df_ci.index]
-    # df_ci.name = 'CI %'
-    # st.dataframe(df_ci)
 
     # =========== Loss Ratio Bootstrap estimate ===========
 
@@ -341,8 +244,6 @@ def show():
     df_lr.index = ['{:.0%}'.format(x) for x in df_lr['p']]
     df_lr = df_lr.drop(['Mean', 'Std. Error'], axis=1)
 
-    def pct(x):
-        return '{:.1%}'.format(x)
     df_lr = df_lr[['Normal', 'Basic', 'Percentile']]
     st.table(df_lr)
 
@@ -382,33 +283,3 @@ def show():
     st.table(df_tvar.style.format({'Mean': '{:,.0f}', 'Std. Error': '{:,.0f}'}))
 
 
-    # # Summary text
-    # iq_range = st.slider('Quartile range', 0.0, 1.0, (0.05, 0.95), 0.025, format='%.3f')
-    # range = iq_range[1] - iq_range[0]
-    # iqr_value = df_boot[TTL_LR].quantile(list(iq_range)).tolist()
-    # # st.write(str(iqr_value))
-    # st.write(f"""
-    # Based on this result, we conclude that our portfolio LR:
-    # - Has a mean of {df_boot[TTL_LR].mean():.0%}
-    # - On a given year, will have LR between ({iqr_value[0]:.0%}, {iqr_value[1]:.0%}) with {range:.0%} confidence
-    #
-    # """)
-    #
-    # # draw loss ratio distribution
-    #
-    # alt_violin = alt.Chart(
-    #     df_boot,
-    #     title='Distribution of bootstrap portfolio loss ratio'
-    # ).transform_density(
-    #     TTL_LR,
-    #     as_=[TTL_LR, "density"],
-    # ).mark_area(
-    #     opacity=0.1,
-    #     line={'color': 'steelblue'}
-    # ).encode(
-    #     x=alt.X(TTL_LR, scale=alt.Scale(zero=False)),
-    #     y=alt.Y("density:Q", title=None),
-    # ).properties(
-    #     height=200
-    # )
-    # st.altair_chart(alt_violin, use_container_width=True)
