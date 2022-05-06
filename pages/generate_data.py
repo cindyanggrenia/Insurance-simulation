@@ -15,7 +15,11 @@ def show():
     st.write("""
     This simulator application generate claims data based on various user inputs to allows varying level of complexity of the dataset generated.
     
-    Traditionally, claims are modelled with different distibution for frequency and claims severity. Usually, Poisson distribution is used to model frequency and Gamma distibution is used to model severity.
+    Traditionally, claims are modelled with different distibution for frequency and claims severity. 
+    In this application, we are going to
+    1. [Setup sum under risk and premium](#sum-under-risk-and-premium-setup) First we setup the policies, liability, and premium model
+    2. [Generate claims frequency](#claim-frequency-generation) Next, we generate occurances of claims
+    3. [Generate claims severity](#claim-frequency-generation) Finally, we generate the level of severity of claims
     """)
 
     st.subheader("Sum Under Risk and Premium setup")
@@ -24,7 +28,7 @@ def show():
     """)
 
     with st.form('SUR and Premium form') as f:
-        from st_aggrid import GridOptionsBuilder, AgGrid
+        from st_aggrid import GridOptionsBuilder, AgGrid, JsCode
 
         n_policies = int(st.number_input('Number of Policies', 100, 50000, 5000))
         rate_on_line = st.slider('Rate on Line', 0.001, 0.1, 0.02)  # equivalent to Exposure
@@ -38,7 +42,8 @@ def show():
         ob.configure_column(const.SUR, type=["numericColumn"], editable=True)
         ob.configure_column(const.BRACKET_P, type=["numericColumn"], editable=True)
 
-        response = AgGrid(df_premium_template, ob.build(), height=250, editable=True, fit_columns_on_grid_load=True)
+        response = AgGrid(df_premium_template, ob.build(), height=250, editable=True, fit_columns_on_grid_load=True,
+                          allow_unsafe_jscode=True)
 
         st.form_submit_button('Generate data')
 
@@ -60,7 +65,7 @@ def show():
     dfp_styler = dfp.style.format(formatting)
     df_policy = genPolicyPremium(n_policies, dfp[const.SUR], dfp[const.BRACKET_P], rate_on_line)
 
-    with st.expander('See explanation', expanded=False):
+    with st.expander('See explanation', expanded=True):
         st.dataframe(dfp_styler)
 
         st.write("""
@@ -78,7 +83,7 @@ def show():
 
         alt_hist = alt.Chart(
             df_policy,
-            title='Bootstrapped premium distribution'
+            title='Generated premium distribution'
         ).mark_bar().encode(
             x=alt.X(const.PREMIUM + ':Q', bin=alt.BinParams(maxbins=50)),
             y='count()',
@@ -164,8 +169,46 @@ def show():
         df = genClaimProbabiliy(df_policy, mu)
         return df_graph, df
 
-    st.write('#### Claim Frequency distribution')
-    freq_model = {'Beta-Binomial': freq_beta_binomial, 'Poisson': freq_poisson}
+
+    def freq_nbinom():
+        from scipy.stats import nbinom
+        st.write('#### Negative Binomial distribution')
+        st.write("This distribution model the number of successes until we observe the rth failure "
+                 "in independent repetitions of binary outcomes"
+                 "The negative binomial is parameterized by n and p")
+
+        col201, col202 = st.columns(2)
+        with col201:
+            n = st.slider('n parameter', 0.0, 10.0, 0.5)
+        with col202:
+            p = st.slider('p parameter', 0.0, 1.0, 0.85)
+
+        x = np.linspace(0, 10, 11)
+        df_graph = pd.DataFrame({'x': x,
+                                 f'n={n}, p={p}': nbinom.pmf(x, n=n, p=p),
+                                 'n=3, p=0.6': nbinom.pmf(x, n=3, p=.6),
+                                 'n=2, p=0.7': nbinom.pmf(x, n=2, p=.7),
+                                 'n=4, p=0.5': nbinom.pmf(x, n=4, p=0.5),
+                                 'n=1, p=0.1': nbinom.pmf(x, n=1, p=0.1),
+                                 # 'a=2, b=80': poisson.pdf(x, a=2, b=80),
+                                 })
+
+        @st.cache
+        def genClaimProbabiliy(data_in, n, p):
+            """Add latent claims probability to existing policy dataframe"""
+            data = data_in.copy()
+            data[const.HAS_CLAIM] = rng.negative_binomial(n, p, size=data.shape[0])
+            return data
+
+        st.session_state.freq_model = 'Negative Binomial'
+        st.session_state.freq_model_param = {'n': n, 'p': p}
+
+        df = genClaimProbabiliy(df_policy, n, p)
+        return df_graph, df
+
+
+    st.write('#### Claim Frequency Generation')
+    freq_model = {'Beta-Binomial': freq_beta_binomial, 'Poisson': freq_poisson, 'Negative Binomial': freq_nbinom}
     # TODO: add negative binomial, poisson gamma
     selected_freq_model = st.selectbox('Choises of model:', options=freq_model.keys(), index=1)
 
@@ -181,6 +224,8 @@ def show():
 
     if selected_freq_model == 'Poisson':
         x_axis = alt.X('x', axis=alt.Axis(values=list(range(0, 5, 1))))
+    elif selected_freq_model == 'Negative Binomial':
+        x_axis = alt.X('x', axis=alt.Axis(values=list(range(0, 10, 1))))
     else:
         x_axis = 'x'
 
@@ -199,12 +244,12 @@ def show():
     )
     st.altair_chart((alt_freq + alt_text), use_container_width=True)
 
-    with st.expander('Show generated claims probability and occurance', expanded=False):
+    with st.expander('Show generated claims probability and occurance', expanded=True):
         st.dataframe(df.head(100).style.format(formatting))
-        st.text(f"""
-        Number of policies: {df.shape[0]}
-        Total premium: {df[const.PREMIUM].sum():,.0f}
-        Number of claims: {df[const.HAS_CLAIM].sum()}""")
+        st.write(f"""
+        - Number of policies: {df.shape[0]}
+        - Total premium: {df[const.PREMIUM].sum():,.0f}
+        - Number of claims: {df[const.HAS_CLAIM].sum()}""")
 
         st.write(df[[const.HAS_CLAIM]]
                  .groupby(const.HAS_CLAIM)
@@ -221,7 +266,7 @@ def show():
         data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
         return data
 
-    st.write('#### Gamma distribution')
+    st.write('#### Claim Severity Generation')
     st.write("This distribution models claim severity. It has two parameters: shape parameter k and scale parameter θ")
 
     from scipy.stats import gamma
@@ -271,11 +316,11 @@ def show():
 
     with st.expander('Show generated claims severity and claims amount', expanded=True):
         st.dataframe(df.head(100).style.format(formatting))
-        st.text(f"""
-        Number of policies: {df.shape[0]}
-        Total premium: {df[const.PREMIUM].sum():,.0f}
-        Number of claims: {df[const.HAS_CLAIM].sum()}
-        Total claims: {df[const.CLAIMS].sum():,.0f}""")
+        st.write(f"""
+        - Number of policies: {df.shape[0]}
+        - Total premium: {df[const.PREMIUM].sum():,.0f}
+        - Number of claims: {df[const.HAS_CLAIM].sum()}
+        - Total claims: {df[const.CLAIMS].sum():,.0f}""")
 
     # if st.button('Save data and go to bootstrapping 🚀'):
     st.session_state.df = df
