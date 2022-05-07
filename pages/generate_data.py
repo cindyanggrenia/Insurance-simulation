@@ -96,7 +96,7 @@ def show():
     st.write("""
     The claims generating process is modelled as:
       - Claim frequency model: modelling the number of claims that happen for a partifular policy
-      - Gamma: conditional latent probability of the claim severity (measured as losses per unit liability)
+      - Claim severity model: modelling latent probability of claim severity (losses per unit liability)
     """)
 
     def freq_beta_binomial():
@@ -169,7 +169,6 @@ def show():
         df = genClaimProbabiliy(df_policy, mu)
         return df_graph, df
 
-
     def freq_nbinom():
         from scipy.stats import nbinom
         st.write('#### Negative Binomial distribution')
@@ -206,20 +205,19 @@ def show():
         df = genClaimProbabiliy(df_policy, n, p)
         return df_graph, df
 
-
     st.write('#### Claim Frequency Generation')
     freq_model = {'Beta-Binomial': freq_beta_binomial, 'Poisson': freq_poisson, 'Negative Binomial': freq_nbinom}
-    # TODO: add negative binomial, poisson gamma
+
     selected_freq_model = st.selectbox('Choises of model:', options=freq_model.keys(), index=1)
 
-    df_freq, df = freq_model[selected_freq_model]()
+    df_freq, df_claim_freq = freq_model[selected_freq_model]()
 
     alt_data = df_freq.melt('x')
     alt_data.rename(columns={'value': 'pdf', 'variable': 'params'}, inplace=True)
     alt_data['colours'] = alt_data['params']
     colours = dict(zip(
         df_freq.columns[1:7],
-        ['#FF4B4B', '#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7']))
+        ['#FF4B4B', '#9da8c3', '#7d8db0', '#3a598a', '#bdc4d7', '#5d729d']))
     alt_data['colours'] = alt_data['colours'].replace(colours)
 
     if selected_freq_model == 'Poisson':
@@ -245,57 +243,188 @@ def show():
     st.altair_chart((alt_freq + alt_text), use_container_width=True)
 
     with st.expander('Show generated claims probability and occurance', expanded=True):
-        st.dataframe(df.head(100).style.format(formatting))
+        st.dataframe(df_claim_freq.head(100).style.format(formatting))
         st.write(f"""
-        - Number of policies: {df.shape[0]}
-        - Total premium: {df[const.PREMIUM].sum():,.0f}
-        - Number of claims: {df[const.HAS_CLAIM].sum()}""")
+        - Number of policies: {df_claim_freq.shape[0]}
+        - Total premium: {df_claim_freq[const.PREMIUM].sum():,.0f}
+        - Number of claims: {df_claim_freq[const.HAS_CLAIM].sum()}""")
 
-        st.write(df[[const.HAS_CLAIM]]
+        st.write(df_claim_freq[[const.HAS_CLAIM]]
                  .groupby(const.HAS_CLAIM)
                  .agg(counts=pd.NamedAgg(column=const.HAS_CLAIM, aggfunc="count"))
                  .reset_index())
 
     # ======================= generating claims severity ========================
 
-    @st.cache
-    def genClaimSeverity(data_in, a, scale):
-        """Add latent claims severity and calculate claims amount"""
-        data = data_in.copy()
-        data[const.LATENT_SEV] = rng.gamma(shape=a, scale=scale, size=data.shape[0])
-        data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
-        return data
+    def sev_gamma():
+        from scipy.stats import gamma
+
+        st.write("""
+        #### Gamma distribution
+        This distribution is often used to model claim severity.
+        The gamma distribution is considered a light tailed distribution, 
+        which may not be suitable to model risky asset with severe losses.
+        It has two parameters: shape parameter k and scale parameter θ
+        """)
+
+        a_default = 1.6
+        scale_default = 0.1
+
+        if 'sev_model' in st.session_state:
+            if st.session_state.sev_model == 'Gamma':
+                a_default = st.session_state.sev_model_param['a']
+                scale_default = st.session_state.sev_model_param['scale']
+
+        col301, col302 = st.columns(2)
+        with col301:
+            gamma_a = st.slider('Shape parameter k', 0.01, 5.0, a_default, format='%.2f')
+        with col302:
+            gamma_scale = st.slider('Scale parameter θ', 0.01, 0.5, scale_default, step=0.005, format='%.3f')
+
+        x = np.linspace(0.00001, 1, 500)
+        df_graph = pd.DataFrame({'x': x,
+                                 f'a={gamma_a}, θ={gamma_scale}': gamma.pdf(x, a=gamma_a, scale=gamma_scale),
+                                 'a=1, θ=2': gamma.pdf(x, a=1, scale=2),
+                                 'a=2, θ=0.1': gamma.pdf(x, a=2, scale=0.1),
+                                 'a=2, θ=0.2': gamma.pdf(x, a=2, scale=0.2),
+                                 'a=1, θ=1': gamma.pdf(x, a=1, scale=1),
+                                 'a=1, θ=0.3': gamma.pdf(x, a=1, scale=0.3),
+                                 # 'a=7.5, θ=1': gamma.pdf(x, a=7.5, scale=1)
+                                 })
+
+        @st.cache
+        def genClaimSeverity(data_in, a, scale):
+            """Add latent claims severity and calculate claims amount"""
+            data = data_in.copy()
+            data[const.LATENT_SEV] = rng.gamma(shape=a, scale=scale, size=data.shape[0])
+            data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
+            return data
+
+        st.session_state.sev_model = 'Gamma'
+        st.session_state.sev_model_param = {'a': gamma_a, 'scale': gamma_scale}
+
+        df = genClaimSeverity(df_claim_freq, a=gamma_a, scale=gamma_scale)
+        return df_graph, df
+
+
+    def sev_pareto():
+        from scipy.stats import pareto
+
+        st.write("""
+        #### Pareto distribution
+        It is a positively skewed and heavy-tailed distribution which makes it suitable for modeling income, 
+        high-risk insurance claims and severity of large casualty losses. 
+        It has two parameters: shape parameter b and scale parameter θ
+        """)
+
+        b_default = 5.0
+        scale_default = 0.3
+
+        if 'sev_model' in st.session_state:
+            if st.session_state.sev_model == 'Pareto':
+                b_default = st.session_state.sev_model_param['b']
+                scale_default = st.session_state.sev_model_param['scale']
+
+        col301, col302 = st.columns(2)
+        with col301:
+            pareto_b = st.slider('Shape parameter b', 0.01, 10.0, b_default, format='%.2f')
+        with col302:
+            pareto_scale = st.slider('Scale parameter θ', 0.0, 2.0, scale_default, format='%.2f')
+
+        x = np.linspace(-0.1, 0.4, 500)
+        df_graph = pd.DataFrame({'x': x,
+                                 f'b={pareto_b}, θ={pareto_scale}': pareto.pdf(x+pareto_scale, b=pareto_b, scale=pareto_scale),
+                                 # 'b=3, θ=0.2': pareto.pdf(x+0.2, b=3, scale=0.2),
+                                 'b=2, θ=0.1': pareto.pdf(x+0.1, b=2, scale=0.1),
+                                 'b=2, θ=0.2': pareto.pdf(x+0.2, b=2, scale=0.2),
+                                 'b=1, θ=1': pareto.pdf(x+1, b=1, scale=1),
+                                 'b=1, θ=0.3': pareto.pdf(x+0.3, b=1, scale=0.3),
+                                 # 'b=7.5, θ=1': pareto.pdf(x, b=7.5, scale=1)
+                                 })
+
+        @st.cache
+        def genClaimSeverity(data_in, b, scale):
+            """Add latent claims severity and calculate claims amount"""
+            data = data_in.copy()
+            data[const.LATENT_SEV] = pareto.rvs(b, scale=scale, size=data.shape[0], random_state=rng)-scale
+            data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
+            return data
+
+        st.session_state.sev_model = 'Pareto'
+        st.session_state.sev_model_param = {'b': pareto_b, 'scale': pareto_scale}
+
+        df = genClaimSeverity(df_claim_freq, b=pareto_b, scale=pareto_scale)
+        return df_graph, df
+
+    def sev_weibull():
+        from scipy.stats import weibull_min
+
+        st.write("""
+        #### Weibull distribution
+        Weibull is widely used in reliability, life data analysis, weather forecasts and general insurance claims. 
+        It is particularly useful to model truncated claims data. 
+        It has two parameters: shape parameter c and scale parameter θ
+        """)
+
+        c_default = 1.52
+        scale_default = 0.12
+
+        if 'sev_model' in st.session_state:
+            if st.session_state.sev_model == 'Weibull':
+                c_default = st.session_state.sev_model_param['c']
+                scale_default = st.session_state.sev_model_param['scale']
+
+        col301, col302 = st.columns(2)
+        with col301:
+            c = st.slider('Shape parameter c', 0.01, 10.0, c_default, format='%.2f')
+        with col302:
+            scale = st.slider('Scale parameter θ', 0.0, 1.0, scale_default, format='%.2f')
+
+        x = np.linspace(0, 1, 500)
+        df_graph = pd.DataFrame({'x': x,
+                                 f'c={c}, θ={scale}': weibull_min.pdf(x, c=c, scale=scale),
+                                 'c=3, θ=0.2': weibull_min.pdf(x, c=3, scale=0.2),
+                                 'c=2, θ=0.1': weibull_min.pdf(x, c=2, scale=0.1),
+                                 'c=2, θ=0.2': weibull_min.pdf(x, c=2, scale=0.2),
+                                 'c=1, θ=1': weibull_min.pdf(x, c=1.75, scale=0.5),
+                                 # 'c=1, θ=0.3': weibull_min.pdf(x, c=1, scale=0.3),
+                                 # 'c=7.5, θ=1': weibull_min.pdf(x, c=7.5, scale=1)
+                                 })
+
+        @st.cache
+        def genClaimSeverity(data_in, c, scale):
+            """Add latent claims severity and calculate claims amount"""
+            data = data_in.copy()
+            data[const.LATENT_SEV] = weibull_min.rvs(c, scale=scale, size=data.shape[0], random_state=rng)
+            data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
+            return data
+
+        st.session_state.sev_model = 'Pareto'
+        st.session_state.sev_model_param = {'c': c, 'scale': scale}
+
+        df = genClaimSeverity(df_claim_freq, c=c, scale=scale)
+        return df_graph, df
+
 
     st.write('#### Claim Severity Generation')
-    st.write("This distribution models claim severity. It has two parameters: shape parameter k and scale parameter θ")
+    sev_model = {'Gamma': sev_gamma, 'Pareto': sev_pareto, 'Weibull': sev_weibull}
+    sev_model_index = {'Gamma': 0, 'Pareto': 1, 'Weibull': 2}
 
-    from scipy.stats import gamma
+    if 'sev_model' in st.session_state:
+        sev_model_default = sev_model_index[st.session_state.sev_model]
+    else:
+        sev_model_default = 0
 
-    col301, col302 = st.columns(2)
-    with col301:
-        gamma_a = st.slider('Shape parameter k', 0.01, 5.0, 1.6, format='%.2f')
-    with col302:
-        gamma_scale = st.slider('Scale parameter θ', 0.01, 0.5, 0.1, step=0.005, format='%.3f')
+    selected_sev_model = st.selectbox('Choises of model:', options=sev_model.keys(), index=sev_model_default)
 
-    args = {'a': gamma_a, 'scale': gamma_scale}
+    df_graph, df = sev_model[selected_sev_model]()
 
-    x = np.linspace(0.00001, 1, 500)
-    df_gamma = pd.DataFrame({'x': x,
-                             f'a={gamma_a}, θ={gamma_scale}': gamma.pdf(x, a=gamma_a, scale=gamma_scale),
-                             'a=1, θ=2': gamma.pdf(x, a=1, scale=2),
-                             'a=2, θ=0.1': gamma.pdf(x, a=2, scale=0.1),
-                             'a=2, θ=0.2': gamma.pdf(x, a=2, scale=0.2),
-                             'a=1, θ=1': gamma.pdf(x, a=1, scale=1),
-                             'a=1, θ=0.3': gamma.pdf(x, a=1, scale=0.3),
-                             # 'a=7.5, θ=1': gamma.pdf(x, a=7.5, scale=1)
-                             })
-
-    alt_data = df_gamma.melt('x')
+    alt_data = df_graph.melt('x')
     alt_data.rename(columns={'value': 'pdf', 'variable': 'params'}, inplace=True)
     alt_data['colours'] = alt_data['params']
     colours = dict(zip(
-        df_gamma.columns[1:7],
-        ['#FF4B4B', '#3a598a', '#5d729d', '#7d8db0', '#9da8c3', '#bdc4d7']))
+        df_graph.columns[1:7],
+        ['#FF4B4B', '#9da8c3', '#7d8db0', '#bdc4d7', '#3a598a', '#5d729d']))
     alt_data['colours'] = alt_data['colours'].replace(colours)
     alt_beta = alt.Chart(alt_data).mark_line().encode(
         x='x',
@@ -311,8 +440,6 @@ def show():
         color=alt.Color('colours', scale=None)
     )
     st.altair_chart((alt_beta + alt_text), use_container_width=True)
-
-    df = genClaimSeverity(df, gamma_a, gamma_scale)
 
     with st.expander('Show generated claims severity and claims amount', expanded=True):
         st.dataframe(df.head(100).style.format(formatting))

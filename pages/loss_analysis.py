@@ -7,46 +7,47 @@ from helper import saved_df
 
 
 def show():
-    st.write('# Analysis')
+    st.write('# Loss Analysis')
 
     if not isinstance(saved_df().df, pd.DataFrame):
         st.write('Save data in "Generate Data" step first')
         st.stop()
 
-    df = saved_df().df.copy()
+    df = saved_df().df
     n = df.shape[0]
 
     st.write("""
-    In this section we will analyse summary statistics and  distribution of our generated data.
+    In this section we will analyse summary statistics and distribution of our generated data.
     """)
-
-    st.write("### Estimating frequency distribution")
     st.write("""
     Given a set of observed data, we often wish to know the most suitable parameter of a distribution function 
-    that best represent the data, i.e. maximises the likelihood ob the observed dataset. 
-    The Maximum Likelihood Estimators (MLE) is precisely that, the value that maximises the likelihood of the observation
+    that best represent the data, i.e. maximises the likelihood ob the observed dataset. To do so, we will use 
+    the **Maximum Likelihood Estimators (MLE)**, which is the value that maximises the likelihood of the observation.
+    Additionally, we will use **Chi-Squared goodness of fit** test to check if the fitted distribution represents the data.
     """)
 
-    alt_freq = alt.Chart(df[[const.HAS_CLAIM]]).mark_bar(size=50).encode(
-        x=const.HAS_CLAIM + ':O',
-        y='count()'
+    st.write("### A. Estimating frequency distribution")
+
+    alt_freq = alt.Chart(df[[const.HAS_CLAIM]], height=alt.Step(30), ).mark_bar(size=20).encode(
+        x='count()',
+        y=const.HAS_CLAIM + ':O'
     )
-    text = alt_freq.mark_text(align='center', dy=-5, color='steelblue').encode(
+    text = alt_freq.mark_text(align='center', dx=15, color='steelblue').encode(
         text='count()'
     )
 
-    col101, col102 = st.columns([2,1])
+    col101, col102 = st.columns([2, 1])
     with col101:
         st.altair_chart((alt_freq + text), use_container_width=True)
     with col102:
         df_counts = (df[[const.HAS_CLAIM]].groupby(const.HAS_CLAIM)
                      .agg(counts=pd.NamedAgg(column=const.HAS_CLAIM, aggfunc="count"))
                      .reset_index())
-        df_counts.index = ['']*df_counts.shape[0]
+        df_counts.index = [''] * df_counts.shape[0]
         st.write(df_counts)
 
     # goodness of fit
-    st.write("### Goodness of Fit")
+    st.write("#### Goodness of Fit")
 
     freq_options = {'Beta-Binomial': 0, 'Poisson': 1, 'Negative-Binomial': 2}
 
@@ -121,7 +122,7 @@ def show():
         param = st.session_state.freq_model_param
         st.write(fr"""
         Compare this with the original parameter used for generating the data, $\frac{{\alpha}}{{\alpha + \beta}}$ is 
-        {param['a']/(param['a'] + param['b']) :,.3f}. Although, because multiple paid of α β satisfy this condition, 
+        {param['a'] / (param['a'] + param['b']) :,.3f}. Although, because multiple paid of α β satisfy this condition, 
         they are not recoverable.""")
 
     st.write("""
@@ -155,9 +156,9 @@ def show():
     df_fit[const.HAS_CLAIM] = df_fit[const.HAS_CLAIM].astype(str)
     K = capped_at  # for chi-2 test number of category
     if n > df_fit['Fitted Counts'].sum():
-        K = K+1
+        K = K + 1
         df_fit = df_fit.append({const.HAS_CLAIM: f'>{capped_at}',
-                                'Fitted Counts': n-df_fit['Fitted Counts'].sum()},
+                                'Fitted Counts': n - df_fit['Fitted Counts'].sum()},
                                ignore_index=True)
 
     df_counts[const.HAS_CLAIM] = df_counts[const.HAS_CLAIM].astype(str)
@@ -168,13 +169,60 @@ def show():
 
     # chi square test
     from scipy.stats import chi2
-    chi_square = ((df_diff['Obs. counts'] - df_diff['Fitted counts'])**2 / (n * df_diff['Fitted counts']))
+    chi_square = ((df_diff['Obs. counts'] - df_diff['Fitted counts']) ** 2 / (n * df_diff['Fitted counts']))
     # chi_square.replace([np.inf, -np.inf], 0, inplace=True)
     st.latex(r"\small \frac{(\text{Obs. counts} - \text{Fitted counts})^2 }{n \times \text{Fitted counts}} = "
              f"{chi_square.sum():,.3f}")
 
-    crit_value = chi2.ppf(cl, df=K-1-1)  # number of parameters being estimated is 1 for both cases
+    crit_value = chi2.ppf(cl, df=K - 1 - 1)  # number of parameters being estimated is 1 for both cases
     result = 'is a good fit' if crit_value >= chi_square.sum() else 'is not a good fit'
     st.write(f"Compare this to the chi-square distribution critical value at {cl:.1%} confidence "
-             f"with {K-1-1} degree of freedom: {crit_value:.2f}. So, we conclude the fitted distribution {result}.")
+             f"with {K - 1 - 1} degree of freedom: {crit_value:.2f}. So, we conclude the fitted distribution **{result}**.")
 
+    st.write("### B. Estimating severity distribution")
+    st.write("""
+    Below is summary of our claims severity measured as losses per unit liability.
+    """)
+
+    from scipy.stats import gamma, pareto, weibull_min, gaussian_kde
+
+    bins = df[const.LATENT_SEV].max() / 60
+    alt_sev = alt.Chart(df[[const.LATENT_SEV]]).transform_joinaggregate(
+        total='count(*)'
+    ).transform_calculate(
+        pct=f'1 / {bins} / datum.total'
+    ).mark_bar(opacity=0.2, color='lightslategray').encode(
+        x=alt.X(const.LATENT_SEV + ':Q', bin=alt.BinParams(step=bins)),
+        y='sum(pct):Q',
+    )
+
+    @st.experimental_memo
+    def fit_severity(data):
+        x = np.linspace(0, max(data), 300)
+        gamma_args = gamma.fit(data)
+        pareto_args = pareto.fit(data)
+        weibull_args = weibull_min.fit(data)
+
+        df_fitted = pd.DataFrame({'x': x,
+                                  'data (kde)': gaussian_kde(data).pdf(x),
+                                  'weibull': weibull_min.pdf(x, *weibull_args),
+                                  'gamma': gamma.pdf(x, *gamma_args),
+                                  'pareto': pareto.pdf(x, *pareto_args),
+                                  })
+        output = df_fitted.melt('x')
+        output.rename(columns={'value': 'pdf', 'variable': 'model'}, inplace=True)
+        return output
+
+    alt_data = fit_severity(df[const.LATENT_SEV])
+    alt_fitted = alt.Chart(alt_data).mark_line().encode(
+        x='x',
+        y='pdf',
+        color=alt.Color('model',
+                        scale=alt.Scale(domain=['data (kde)', 'weibull', 'gamma', 'pareto'],
+                                        range=['#FF4B4B', '#9da8c3', 'steelblue', '#80c3c2'])),
+        tooltip=[alt.Tooltip('model'),
+                 alt.Tooltip('x', format=',.2f'),
+                 alt.Tooltip('pdf', format=',.3f')]
+    )
+
+    st.altair_chart(alt.layer(alt_sev, alt_fitted), use_container_width=True)

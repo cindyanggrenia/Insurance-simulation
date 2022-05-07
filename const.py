@@ -10,6 +10,6 @@ CLAIMS = 'claims'
 LR = 'loss_ratio'
 
 formatting = {SUR: '{:,.0f}', PREMIUM: '{:,.0f}', CLAIMS: '{:,.0f}',
-              LATENT_CLAIM_P: '{:.1%}', LATENT_SEV: '{:,.1f}', ROL: '{:,.1f}',
+              LATENT_CLAIM_P: '{:.2%}', LATENT_SEV: '{:,.2f}', ROL: '{:,.1f}',
               BRACKET_P: '{:.1%}', LR: '{:.0%}',
               HAS_CLAIM: '{:,.0f}'}
