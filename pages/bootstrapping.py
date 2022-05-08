@@ -257,8 +257,17 @@ def show():
     df_ler = pd.DataFrame()
     df_ler = df_ler.append(conf_int(df_boot[ler_col_name], size=0.95, formatting='{:.1%}'))
 
+    st.write("#### B.  Bootstrap Estimates of Loss Elimination Ratio (LER)")
+
+    ler = df_boot[ler_col_name].melt()
+    alt_hist = alt.Chart(ler, title=f'Histogram of LER distribution').mark_line().encode(
+        x=alt.X('value:Q', bin=alt.BinParams(maxbins=100)),
+        y='count()',
+        color=alt.Color('variable', scale=alt.Scale(scheme='category20'))
+    )
+    st.altair_chart(alt_hist, use_container_width=True)
+
     st.write("""
-        #### B.  Bootstrap Estimates of Loss Elimination Ratio (LER)
         Many of reinsurance contain excess of loss coverage. Insurer imposes deductible, _d_, where if the claims 
         amount up to d is paid by policyholder before the insurer makes any payment
         LER is the percentage decrease in the expected payment of the insurer as a result of imposing the deductible 
@@ -275,8 +284,17 @@ def show():
     df_tvar = pd.DataFrame()
     df_tvar = df_tvar.append(conf_int(df_boot[tvar_col_name], size=0.95, formatting='{:,.0f}'))
 
+    st.write("#### C.  Bootstrap Estimates of Tail Value at Risk (TVaR)")
+
+    tvar = df_boot[tvar_col_name].melt()
+    alt_hist = alt.Chart(tvar, title=f'Histogram of TVaR distribution').mark_line().encode(
+        x=alt.X('value:Q', bin=alt.BinParams(maxbins=100)),
+        y='count()',
+        color=alt.Color('variable', scale=alt.Scale(scheme='category20'))
+    )
+    st.altair_chart(alt_hist, use_container_width=True)
+
     st.write("""
-        #### C.  Bootstrap Estimates of Tail Value at Risk (TVaR)
         In insurance, very large claim at the tail-end of the risk can have a devastating impact to portfolio.
         When claims distribution is not known, it is hard to model the tail probability distribution.
         TVaR is calculated as (sum of claims > Q quantile) / (count of claims > Q quantile)
