@@ -399,7 +399,7 @@ def show():
             data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
             return data
 
-        st.session_state.sev_model = 'Pareto'
+        st.session_state.sev_model = 'Weibull'
         st.session_state.sev_model_param = {'c': c, 'scale': scale}
 
         df = genClaimSeverity(df_claim_freq, c=c, scale=scale)
