@@ -8,7 +8,9 @@ def create_link(links: list):
 
 
 st.set_page_config(page_title='Insurance Simulation', page_icon='📓')
+readme = open('README.md', 'r').read()
 pages = {
+    'Welcome': st.markdown(readme, unsafe_allow_html=True),
     'Generate data': generate_data,
     'Loss analysis': loss_analysis,
     'Simulation and resampling': bootstrapping
@@ -34,10 +36,12 @@ if len(pages):
     st.sidebar.subheader("Insurance portfolio generator and analysis")
     selected_page = st.sidebar.radio("Pages", pages, key=1)
     st.sidebar.write("Jump to section")
-    st.sidebar.markdown(f"<ul>{create_link(subsection[selected_page])}</ul>", unsafe_allow_html=True)
+    if selected_page != 'Welcome':
+        st.sidebar.markdown(f"<ul>{create_link(subsection[selected_page])}</ul>", unsafe_allow_html=True)
 
 else:
-    selected_page = "Generate Data"
+    selected_page = "Welcome"
 
 # Draw main page
-pages[selected_page].show()
+if selected_page != 'Welcome':
+    pages[selected_page].show()
