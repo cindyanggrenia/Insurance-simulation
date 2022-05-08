@@ -202,7 +202,7 @@ def show():
     st.write(df_boot.describe().loc[['mean', 'std', 'min', 'max']]
              .style.format(boot_formatting))
 
-    st.write("#### Estimating Loss Ratio statistics:")
+    st.write("#### Estimating Loss Ratio statistics")
 
     st.write(r'We summarize the nonparametric bootstrap summary measures below.'
              r'Here, $\small\bar{\hat{\theta^*}}$ is the average of '

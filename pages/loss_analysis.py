@@ -26,7 +26,7 @@ def show():
     Additionally, we will use **Chi-Squared goodness of fit** test to check if the fitted distribution represents the data.
     """)
 
-    st.write("### A. Estimating frequency distribution")
+    st.write("### 1. Estimating frequency distribution")
 
     alt_freq = alt.Chart(df[[const.HAS_CLAIM]], height=alt.Step(30), ).mark_bar(size=20).encode(
         x='count()',

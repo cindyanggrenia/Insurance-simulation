@@ -17,9 +17,9 @@ def show():
     
     Traditionally, claims are modelled with different distibution for frequency and claims severity. 
     In this application, we are going to
-    1. [Setup sum under risk and premium](#sum-under-risk-and-premium-setup) First we setup the policies, liability, and premium model
-    2. [Generate claims frequency](#claim-frequency-generation) Next, we generate occurances of claims
-    3. [Generate claims severity](#claim-frequency-generation) Finally, we generate the level of severity of claims
+    1. **Setup sum under risk and premium:** First we setup the policies, liability, and premium model
+    2. **Generate claims frequency:** Next, we generate occurances of claims
+    3. **Generate claims severity:** Finally, we generate the level of severity of claims
     """)
 
     st.subheader("Sum Under Risk and Premium setup")
