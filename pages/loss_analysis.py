@@ -46,6 +46,9 @@ def show():
         df_counts.index = [''] * df_counts.shape[0]
         st.write(df_counts)
 
+    st.write("Summary statistics")
+    st.table(df[[const.HAS_CLAIM]].describe().loc[['mean', 'std', '25%', '50%', '75%', 'max']].T)
+
     # goodness of fit
     st.write("#### Goodness of Fit")
 
@@ -179,10 +182,15 @@ def show():
     st.write(f"Compare this to the chi-square distribution critical value at {cl:.1%} confidence "
              f"with {K - 1 - 1} degree of freedom: {crit_value:.2f}. So, we conclude the fitted distribution **{result}**.")
 
-    st.write("### B. Estimating severity distribution")
+    # TODO: Model selection using test dataset / cross validation
+    # TODO: Calculate information criteria such as AIC and BIC
+    # TODO: Evaluation of model using qq and probplot
+
     st.write("""
+    ### 2. Estimating severity distribution
     Below is summary of our claims severity measured as losses per unit liability.
     """)
+    st.table(df[[const.LATENT_SEV]].describe().loc[['mean', 'std', 'min', '25%', '50%', '75%', 'max']].T)
 
     from scipy.stats import gamma, pareto, weibull_min, gaussian_kde
 
@@ -226,3 +234,188 @@ def show():
     )
 
     st.altair_chart(alt.layer(alt_sev, alt_fitted), use_container_width=True)
+
+    st.write("""
+    ### 3. Empirical estimator
+    One way to analyse our data is use nonparametric estimator such as Plug-In Principle
+    without reference to a parametric model or assuming the underlying distribution
+    """)
+
+    st.write("""#### 3.1 Claims and Premium""")
+    df_summary = df[[const.PREMIUM, const.CLAIMS, const.CLAIMS]].copy()
+    df_summary.columns = [const.PREMIUM, 'zero claims', 'non-zero claims']
+    df_summary.loc[df_summary['zero claims'] > 0, ['zero claims']] = np.nan
+    df_summary.loc[df_summary['non-zero claims'] == 0, ['non-zero claims']] = np.nan
+
+    st.table(df_summary.describe().T.style.format('{:,.0f}'))
+
+    def trunc_num(x, digit: int):
+        return int(str(int(x))[:digit]) * 10 ** (len(str(int(x))) - digit)
+
+    col301, col302 = st.columns(2)
+    with col301:
+        alt_premium = alt.Chart(df[[const.PREMIUM]], title='Premium histogram').mark_bar().encode(
+            x=alt.X(const.PREMIUM + ':Q', bin=alt.BinParams(maxbins=60)),
+            y='count():Q',
+        )
+        st.altair_chart(alt_premium, use_container_width=True)
+    with col302:
+        alt_claims = alt.Chart(df_summary[['non-zero claims']], title='Non-zero claims histogram').mark_bar().encode(
+            x=alt.X('non-zero claims:Q',
+                    bin=alt.BinParams(maxbins=60)),
+            y='count():Q',
+        )
+        st.altair_chart(alt_claims, use_container_width=True)
+
+    st.write("#### 3.2. Loss Elimination Ratio")
+    st.write("""for a deductible, _d_, and upper limit, _u_, the loss elimination ratio (LER) is the 
+    percentage decrease in the expected payment of the insurer as a result of imposing the rules. LER can express it as
+    """)
+    st.latex(r"LER_n(d, u) = \frac{\sum_{i=1}^n \min(X_i,d) + \max(X_i - u,0)}{\sum_{i=1}^n X_i}")
+
+    col401, col402 = st.columns(2)
+    max_input = int(df[const.CLAIMS].max())
+    with col401:
+        d_default = trunc_num(np.nanquantile(df_summary['non-zero claims'], 0.2), 2)
+        d = st.number_input('Deductible', 0, max_input, d_default)
+    with col402:
+        u_default = trunc_num(np.nanquantile(df_summary['non-zero claims'], 0.95), 2)
+        u = st.number_input('Upper limit', 0, max_input, u_default)
+
+    df_trunc = df_summary[['non-zero claims']]
+    df_trunc.columns = ['claims']
+    df_trunc['color'] = ['steelblue' if (x > d) & (x < u) else 'darkgrey' for x in df_trunc['claims']]
+
+    alt_claims_censor = alt.Chart(df_trunc).mark_bar().encode(
+        x=alt.X('claims:Q',
+                bin=alt.BinParams(maxbins=100)),
+        y='count():Q',
+        color=alt.Color('max(color)', scale=None, legend=None)
+    )
+    st.altair_chart(alt_claims_censor, use_container_width=True)
+    ler = (df[const.CLAIMS].values.clip(max=d) + (df[const.CLAIMS] - u).values.clip(min=0)).sum() / df[
+        const.CLAIMS].sum()
+    st.write(f"""
+    - Loss Elimination Ratio = {ler:.1%}
+    - Upper limit affects {df[df[const.CLAIMS] > u].shape[0]} claims
+    - {df_summary[df_summary['non-zero claims'] < d].shape[0]} claims below deductible amount
+    """)
+
+    @st.experimental_memo
+    def ler_hold_u(data, u, n_line=100):
+        x = np.linspace(0, data.max(), n_line)
+
+        # clip x so that it stops at u, since when d = u, insurer pays nothing
+        claims_d = data.values.clip(max=np.array([x.clip(max=u)]).T) + (data.values - u).clip(min=0)
+
+        df = pd.DataFrame({
+            'x': x,
+            'LER': claims_d.sum(axis=1)
+        })
+        df['LER'] = df['LER'] / data.sum()
+
+        return df
+
+    @st.experimental_memo
+    def ler_hold_d(data, d, n_line=100):
+        x = np.linspace(0, data.max(), n_line)
+
+        # clip x at min=d, when u = d, insurer pays nothing
+        claims_u = data.values.clip(max=d) + (data.values - np.array([x.clip(min=d)]).T).clip(min=0)
+
+        df = pd.DataFrame({
+            'x': x,
+            'LER': claims_u.sum(axis=1)
+        })
+        df['LER'] = df['LER'] / data.sum()
+
+        return df
+
+    with st.expander("See how changing d and u affects the Loss Elimination Ratio"):
+        df_d = ler_hold_u(df[const.CLAIMS], u, 100)
+        df_u = ler_hold_d(df[const.CLAIMS], d, 100)
+        df_ler_point = pd.DataFrame({'d': d, 'u': u, 'LER': ler}, index=[0])
+
+        d_alt = alt.Chart(df_d, title='LER with varying d, holding u').mark_line().encode(
+            x=alt.X('x:Q', title='deductible'),
+            y=alt.Y('LER:Q', axis=alt.Axis(format='%'))
+        )
+        d_line = alt.Chart(df_ler_point).mark_rule(color='#FF4B4B', strokeWidth=1.5).encode(x="d:Q")
+        d_text = alt.Chart(df_ler_point).mark_text(dx=20, dy=5, color='darkgrey').encode(
+            x='d', y='LER', text=alt.Text('LER', format='.1%'),
+        )
+
+        alt_u = alt.Chart(df_u, title='LER with varying u, holding d').mark_line().encode(
+            x=alt.X('x:Q', title='upper limit'),
+            y=alt.Y('LER:Q', axis=alt.Axis(format='%'))
+        )
+        u_line = alt.Chart(df_ler_point).mark_rule(color='#FF4B4B', strokeWidth=1.5).encode(x="u:Q")
+        u_text = alt.Chart(df_ler_point).mark_text(dx=20, dy=-5, color='darkgrey').encode(
+            x='u', y='LER', text=alt.Text('LER', format='.1%'),
+        )
+
+        st.altair_chart(d_alt + d_line + d_text, use_container_width=True)
+        st.altair_chart(alt_u + u_line + u_text, use_container_width=True)
+
+    st.write("#### 3.3. Tail Value-at-Risk (TVaR)")
+    st.write(r"""One method to estimate extreme losses is using quantile based approach 
+    $\small \text{Value-at-Risk} (VaR)$, which measures the $\small (1-q) \times 100\% $ quantile of losses. 
+    Given random variable ${\small X}$ its cumulative distribution function ${\small F_{X}}$. 
+    It is Mathematically expressed as""")
+    st.latex(r"VaR_q[X]=\inf\{x:F_X(x)\geq q\} = F_{Y}^{-1}(1-q)")
+
+    st.write(r"""However, a downside of $\small VaR$ is it doesn't take into account how long or heavy the tail is. 
+    To overcome this, $\text{Tail Value-at-Risk} (TVaR)$ is used to measure the expected loss above the $VaR$ value. 
+    This can be expressed as""")
+    st.latex(r" TVaR_q[X] = \mathrm{E}[X|X>VaR_q[X]]")
+
+    st.write(r"""Supposing we don't know the underlying distribution function of $X$, we can estimate $TVaR$ using
+    the Plug-In Principle as""")
+    st.latex(r"TVaR_{n,q}[X] = \frac{\sum_{i=1}^n X_i I(X_i > F^{-1}_n(q))}{\sum_{i=1}^n I(X_i > F^{-1}_n(q))}")
+    st.write(r"""Here, the notation $I(⋅)$ is the indicator function, it returns 1 if the event ($⋅)$ 
+    is true and 0 otherwise, and $F^{-1}_n(q)$ is the nonparametric estimator of $F_{Y}^{-1}(q)$, 
+    which roughly translates to the $q^{th}$ quantile of $X$""")
+
+    @st.experimental_memo
+    def tvar_matrix(data, n_line=100):
+        x = np.linspace(0, 1, n_line)
+        quantiles = np.quantile(data.values, np.array([x]).T)
+        tail_claims = np.where(data.values >= quantiles, data.values, False)
+
+        df = pd.DataFrame({
+            'x': x,
+            'counts': np.count_nonzero(tail_claims, axis=1),
+            'TVaR': tail_claims.sum(axis=1)
+        })
+        df['TVaR'] = df['TVaR'] / df['counts']
+
+        return df
+
+    @st.experimental_memo
+    def calc_tvar(data, q):
+        quantile = np.quantile(data, q)
+        censored_data = [x for x in data if x >= quantile]
+        return len(censored_data), np.mean(censored_data)
+
+    q = st.slider('Quantile', 0.0, 1.0, 0.95)
+
+    nonzero_claims = df.loc[df[const.CLAIMS] > 0, const.CLAIMS]
+    n_TVaR, TVaR = calc_tvar(nonzero_claims, q)  # TVaR value at given q
+    df_tvar = tvar_matrix(nonzero_claims, 21)
+    df_tvar_point = pd.DataFrame({'q': q, 'TVaR': TVaR}, index=[0])
+
+    st.write("Here, we will observe only non-zero claims, but this can equally be applied to the full portfolio.")
+    st.write(f"""
+        - Tail Value-at-Risk = {TVaR:,.0f}
+        - Number of claims above {q:.0%} quantile = {n_TVaR}
+        """)
+
+    tvar_alt = alt.Chart(df_tvar, title='TVaR with varying quantile').mark_line().encode(
+        x=alt.X('x:Q', title='quantile'),
+        y=alt.Y('TVaR:Q')
+    )
+    tvar_line = alt.Chart(df_tvar_point).mark_rule(color='#FF4B4B', strokeWidth=1.5).encode(x="q:Q")
+    tvar_text = alt.Chart(df_tvar_point).mark_text(dx=-25, dy=-5, color='darkgrey').encode(
+        x='q:Q', y='TVaR:Q', text=alt.Text('TVaR:Q', format=',.0f'),
+    )
+    st.altair_chart(tvar_alt + tvar_line + tvar_text, use_container_width=True)
