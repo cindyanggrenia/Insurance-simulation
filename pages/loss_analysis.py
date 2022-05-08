@@ -73,7 +73,7 @@ def show():
             ll = np.inf  # we don't want that
         return ll
 
-    @st.cache
+    @st.experimental_memo
     def fit_discrete(dist, x, bounds, optimizer=brute):
         return optimizer(func, bounds, args=(dist, x))
 

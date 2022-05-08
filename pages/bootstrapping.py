@@ -25,9 +25,8 @@ boot_formatting = {TTL_PREMIUM: '{:,.0f}', TTL_CLAIMS: '{:,.0f}', TTL_LR: '{:.0%
                    }
 
 
-@st.cache(allow_output_mutation=True)
-def bootstrap(data_in, nboot: int):
-    data = data_in.copy()
+@st.experimental_memo
+def bootstrap(data, nboot: int):
 
     sample_idx = rng.integers(0, len(data), size=(len(data), nboot))
 
@@ -59,7 +58,7 @@ def bootstrap(data_in, nboot: int):
 
 from typing_extensions import Literal
 
-@st.cache
+@st.experimental_memo
 def conf_int(data: pd.DataFrame,
              size: float = 0.95,
              tail: Literal[1, 2] = 2,
@@ -131,7 +130,7 @@ def show():
         st.write('Save data in "Generate Data" step first')
         st.stop()
 
-    df = saved_df().df.copy()
+    df = saved_df().df
 
     st.write(f"""
     Summary of the data from step 1 so far:

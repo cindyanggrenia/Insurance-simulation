@@ -47,7 +47,7 @@ def show():
 
         st.form_submit_button('Generate data')
 
-    @st.cache
+    @st.experimental_memo
     def genPolicyPremium(n, loss: list, probability: list, rol: float) -> pd.DataFrame:
         """Generate policy dataframe with liability and premium generated from liability table and rate on line"""
         data = pd.DataFrame({const.POLICY_ID: [f'p{i}' for i in range(n)],
@@ -122,10 +122,9 @@ def show():
                                  'a=2, b=80': beta.pdf(x, a=2, b=80)
                                  })
 
-        @st.cache
-        def genClaimProbabiliy(data_in, a, b):
+        @st.experimental_memo
+        def genClaimProbabiliy(data, a, b):
             """Add latent claims probability to existing policy dataframe"""
-            data = data_in.copy()
             data[const.LATENT_CLAIM_P] = rng.beta(a=a, b=b, size=data.shape[0])
             data[const.HAS_CLAIM] = rng.binomial(n=1, p=data[const.LATENT_CLAIM_P])  # assume only 1 claim per policy
             return data
@@ -156,10 +155,9 @@ def show():
                                  # 'a=2, b=80': poisson.pdf(x, a=2, b=80),
                                  })
 
-        @st.cache
-        def genClaimProbabiliy(data_in, mu):
+        @st.experimental_memo
+        def genClaimProbabiliy(data, mu):
             """Add latent claims probability to existing policy dataframe"""
-            data = data_in.copy()
             data[const.HAS_CLAIM] = rng.poisson(lam=mu, size=data.shape[0])
             return data
 
@@ -192,10 +190,9 @@ def show():
                                  # 'a=2, b=80': poisson.pdf(x, a=2, b=80),
                                  })
 
-        @st.cache
-        def genClaimProbabiliy(data_in, n, p):
+        @st.experimental_memo
+        def genClaimProbabiliy(data, n, p):
             """Add latent claims probability to existing policy dataframe"""
-            data = data_in.copy()
             data[const.HAS_CLAIM] = rng.negative_binomial(n, p, size=data.shape[0])
             return data
 
@@ -292,10 +289,9 @@ def show():
                                  # 'a=7.5, θ=1': gamma.pdf(x, a=7.5, scale=1)
                                  })
 
-        @st.cache
-        def genClaimSeverity(data_in, a, scale):
+        @st.experimental_memo
+        def genClaimSeverity(data, a, scale):
             """Add latent claims severity and calculate claims amount"""
-            data = data_in.copy()
             data[const.LATENT_SEV] = rng.gamma(shape=a, scale=scale, size=data.shape[0])
             data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
             return data
@@ -342,10 +338,9 @@ def show():
                                  # 'b=7.5, θ=1': pareto.pdf(x, b=7.5, scale=1)
                                  })
 
-        @st.cache
-        def genClaimSeverity(data_in, b, scale):
+        @st.experimental_memo
+        def genClaimSeverity(data, b, scale):
             """Add latent claims severity and calculate claims amount"""
-            data = data_in.copy()
             data[const.LATENT_SEV] = pareto.rvs(b, scale=scale, size=data.shape[0], random_state=rng)-scale
             data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
             return data
@@ -391,10 +386,9 @@ def show():
                                  # 'c=7.5, θ=1': weibull_min.pdf(x, c=7.5, scale=1)
                                  })
 
-        @st.cache
-        def genClaimSeverity(data_in, c, scale):
+        @st.experimental_memo
+        def genClaimSeverity(data, c, scale):
             """Add latent claims severity and calculate claims amount"""
-            data = data_in.copy()
             data[const.LATENT_SEV] = weibull_min.rvs(c, scale=scale, size=data.shape[0], random_state=rng)
             data[const.CLAIMS] = data[const.HAS_CLAIM] * data[const.LATENT_SEV] * data[const.SUR]
             return data
