@@ -10,7 +10,7 @@ def create_link(links: list):
 st.set_page_config(page_title='Insurance Simulation', page_icon='📓')
 readme = open('README.md', 'r').read()
 pages = {
-    'Welcome': st.markdown(readme, unsafe_allow_html=True),
+    'Welcome': 'Welcome',
     'Generate data': generate_data,
     'Loss analysis': loss_analysis,
     'Simulation and resampling': bootstrapping
@@ -43,5 +43,7 @@ else:
     selected_page = "Welcome"
 
 # Draw main page
-if selected_page != 'Welcome':
+if selected_page == 'Welcome':
+    st.markdown(readme, unsafe_allow_html=True)
+else:
     pages[selected_page].show()
